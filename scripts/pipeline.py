@@ -15,6 +15,7 @@ from PIL import Image
 
 API_KEY = os.environ.get("API_KEY", "password")
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8045/v1")
+MAX_RETRIES = 3
 
 def get_drive_service():
     try:
@@ -337,6 +338,18 @@ def generate_image(prompt, output_file, reference_image_url=None):
         print(f"Image generation failed: {e}")
         raise e
 
+def generate_image_with_retry(prompt, output_file, reference_image_url=None, retries=MAX_RETRIES):
+    for attempt in range(1, retries + 1):
+        try:
+            return generate_image(prompt, output_file, reference_image_url)
+        except Exception as e:
+            print(f"[Attempt {attempt}/{retries}] Image generation failed: {e}")
+            if attempt < retries:
+                time.sleep(2)  # optional: wait before retrying
+            else:
+                print(f"⚠️ Skipping image after {retries} failed attempts.")
+                return None  # skip and continue pipeline
+
 def generate_audio(text, output_file, voice="alloy"):
     url = f"{API_BASE_URL}/audio/speech"
     headers = {
@@ -580,10 +593,14 @@ Details: {item['description']}"""
         picture_url = item.get('picture', '')
         if picture_url:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🖼️ Generating cover (Ref: {picture_url[:30]}...) with style: {image_style}{' [Anthro]' if anthro_modifier else ''}")
-            generate_image(image_prompt, os.path.join(project_dir, "cover.png"), picture_url)
+            result = generate_image_with_retry(image_prompt, os.path.join(project_dir, "cover.png"), picture_url)
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🖼️ Generating cover (No Ref) with style: {image_style}{' [Anthro]' if anthro_modifier else ''}")
-            generate_image(image_prompt, os.path.join(project_dir, "cover.png"))
+            result = generate_image_with_retry(image_prompt, os.path.join(project_dir, "cover.png"))
+
+        if result is None:
+            print(f"⚠️ Image generation failed for story: {title}. Skipping...")
+            continue
 
         char_prompt = f"Write a detailed visual description of the main characters, subjects, and the environmental setting suitable for the cover image of a news story titled: '{title}'. Describe their appearance, clothing, the mood of the location, and lighting. Make it highly descriptive.\n\nDetails: {item['description']}"
         char_content = generate_text(char_prompt).strip()
