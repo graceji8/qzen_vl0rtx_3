@@ -302,7 +302,7 @@ def sync_opinions_from_drive(service):
 
 
 
-def fetch_top_news(limit=10):
+def fetch_top_news(limit=30):
     timestamp = datetime.now().strftime('%H:%M:%S')
     regions = ['US', 'CA']
     all_headlines = []
