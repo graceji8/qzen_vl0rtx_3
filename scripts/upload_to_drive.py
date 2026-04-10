@@ -58,8 +58,9 @@ def get_drive_service():
 
 
 def find_existing_folder(service, name, parent_id):
+    escaped_name = name.replace("'", "\\'")
     query = (
-        f"name = '{name}' "
+        f"name = '{escaped_name}' "
         f"and mimeType = 'application/vnd.google-apps.folder' "
         f"and '{parent_id}' in parents "
         f"and trashed = false"
