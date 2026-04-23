@@ -17,19 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: 'America/Los_Angeles'
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4.3.0
         with:
           node-version: '24'
 
@@ -44,7 +43,7 @@ jobs:
       # -------------------------------------------------------
 
       - name: Restore Antigravity Data Session
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v4.2.0
         with:
           path: ~/.antigravity_tools
           key: antigravity-data-${{ runner.os }}-${{ github.run_id }}
@@ -55,7 +54,7 @@ jobs:
         run: mkdir -p ~/.browser-session
 
       - name: Restore browser session
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v4.2.0
         with:
           path: ~/.browser-session
           key: v-browser-session-${{ runner.os }}-${{ github.run_id }}
@@ -91,7 +90,7 @@ jobs:
       # -------------------------------------------------------
 
       - name: Cache Antigravity Docker Image
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.0
         id: cache-antigravity
         with:
           path: /tmp/antigravity-image.tar
@@ -178,7 +177,7 @@ jobs:
           echo "✅ Ollama server started"
 
       - name: Cache Ollama model
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.0
         id: cache-ollama-model
         with:
           path: ~/.ollama/models
@@ -268,14 +267,14 @@ jobs:
 
       - name: Save Antigravity Data Session
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v4.2.0
         with:
           path: ~/.antigravity_tools
           key: antigravity-data-${{ runner.os }}-${{ github.run_id }}
 
       - name: Save browser session
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v4.2.0
         with:
           path: ~/.browser-session
           key: v-browser-session-${{ runner.os }}-${{ github.run_id }}
@@ -286,7 +285,7 @@ jobs:
 
       - name: Save Ollama model cache
         if: always() && steps.cache-ollama-model.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v4.2.0
         with:
           path: ~/.ollama/models
           key: ollama-llama3.2-3b-v1
