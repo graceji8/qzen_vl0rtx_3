@@ -4,6 +4,7 @@ import datetime
 import json
 import argparse
 import pickle
+from collections import defaultdict
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -185,7 +186,81 @@ def fetch_run_stats_from_drive(service, target_date_str):
         
     return combined
 
-def build_daily_report_md(run_stats_path, target_date_str, drive_service=None):
+def fetch_cumulative_stats(service, start_date_str, end_date_str):
+    import io
+    from googleapiclient.http import MediaIoBaseDownload
+    
+    start_dt = datetime.datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_dt = datetime.datetime.strptime(end_date_str, "%Y-%m-%d")
+    
+    root_id = "1tnTb4BjVjOARRKaQjmrse4kddddj9ogj"
+    
+    aggregated = defaultdict(lambda: {"videos": 0, "posts": 0})
+    total_videos = 0
+    total_posts = 0
+    
+    # We only need to check the months involved in the range
+    months_to_check = set()
+    curr = start_dt
+    while curr <= end_dt:
+        months_to_check.add(curr.strftime("%Y_%m"))
+        curr += datetime.timedelta(days=1)
+        
+    for ym in months_to_check:
+        log_filename = f"pipeline_stats_{ym}.jsonl"
+        try:
+            q = f"name='{log_filename}' and '{root_id}' in parents and trashed=false"
+            files = service.files().list(q=q, fields="files(id)").execute().get("files", [])
+            if files:
+                fh = io.BytesIO()
+                dl = MediaIoBaseDownload(fh, service.files().get_media(fileId=files[0]["id"]))
+                done = False
+                while not done:
+                    _, done = dl.next_chunk()
+                records = [json.loads(line) for line in fh.getvalue().decode("utf-8").splitlines() if line.strip()]
+                
+                # Group records by day
+                for r in records:
+                    run_ts = r.get("run_ts", "")
+                    if len(run_ts) >= 10:
+                        day = run_ts[:10]
+                        if start_date_str <= day <= end_date_str:
+                            approved = r.get("topics_approved", 0)
+                            # Overwrite assuming last record of the day has the cumulative total for that day,
+                            # actually the script usually appends daily cumulative, but checking the contents,
+                            # wait: run_ts might be multiple per day, but usually we just want to ensure we take the max
+                            # or sum? The original fetch_run_stats_from_drive does sum():
+                            # combined["topics_approved"] = sum(r.get("topics_approved", 0) for r in day_records)
+                            # Let's just sum them since they might be separate runs.
+                            aggregated[day]["videos"] += approved
+                            aggregated[day]["posts"] += approved
+                            total_videos += approved
+                            total_posts += approved
+        except Exception as e:
+            print(f"Error fetching cumulative stats log from Drive: {e}")
+            
+    return {"total_videos": total_videos, "total_posts": total_posts, "daily": dict(aggregated)}
+
+def check_x_account_status(username, auth_token, ct0):
+    import urllib.request
+    url = f"https://api.twitter.com/1.1/users/show.json?screen_name={username}"
+    headers = {
+        "Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "Cookie": f"auth_token={auth_token}; ct0={ct0}",
+        "X-Csrf-Token": ct0,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "x-twitter-active-user": "yes"
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return f"✅ Active (Followers: {data.get('followers_count', 0)})"
+    except Exception as e:
+        status_code = getattr(e, 'code', 'Unknown')
+        return f"❌ Error or Suspended (HTTP {status_code})"
+
+def build_daily_report_md(run_stats_path, target_date_str, drive_service=None, start_date_str="2026-04-09"):
     stats = None
     if os.path.exists(run_stats_path):
         try:
@@ -219,9 +294,52 @@ def build_daily_report_md(run_stats_path, target_date_str, drive_service=None):
         f"- Images Successfully Generated: {stats.get('images_ok', 0)}",
         f"- Image Failures: {stats.get('images_failed', 0)}",
         f"- Audio Successes: {stats.get('audio_ok', 0)}",
-        "",
-        "## Top News Topics Handled Today"
+        ""
     ]
+
+    # Append Cumulative Summary
+    if drive_service:
+        print(f"Fetching cumulative stats from {start_date_str} to {target_date_str}...")
+        c_stats = fetch_cumulative_stats(drive_service, start_date_str, target_date_str)
+        content_lines.extend([
+            f"## Cumulative Summary ({start_date_str} to {target_date_str})",
+            "",
+            f"**Total Videos:** {c_stats['total_videos']}",
+            f"**Total Posts:** {c_stats['total_posts']}",
+            ""
+        ])
+        content_lines.extend([
+            "### Daily Breakdown",
+            "| Date | Videos | Posts |",
+            "|---|---|---|"
+        ])
+        daily_keys = sorted(c_stats['daily'].keys(), reverse=True)
+        for date_k in daily_keys:
+            d_stats = c_stats['daily'][date_k]
+            content_lines.append(f"| {date_k} | {d_stats['videos']} | {d_stats['posts']} |")
+        
+        content_lines.append("")
+
+    # X Accounts Status
+    x_accounts_json = os.environ.get("X_ACCOUNTS_JSON", "[]")
+    try:
+        x_accounts_list = json.loads(x_accounts_json)
+    except Exception as e:
+        print(f"Error parsing X_ACCOUNTS_JSON: {e}")
+        x_accounts_list = []
+    
+    if x_accounts_list:
+        content_lines.append("## X Accounts Status")
+        for acc in x_accounts_list:
+            username = acc.get("username")
+            auth_token = acc.get("auth_token")
+            ct0 = acc.get("ct0")
+            if username and auth_token and ct0:
+                status = check_x_account_status(username, auth_token, ct0)
+                content_lines.append(f"- **{username}**: {status}")
+        content_lines.append("")
+
+    content_lines.append("## Top News Topics Handled Today")
 
     for title in titles:
         content_lines.append(f"- {title}")
@@ -338,6 +456,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Parse the stats but do not add to calendar.')
     parser.add_argument('--list', type=str, help='List events for a specific date (YYYY-MM-DD).')
     parser.add_argument('--date', type=str, help='Sync a specific date (YYYY-MM-DD). Defaults to today.')
+    parser.add_argument('--start-date', type=str, default='2026-04-09', help='Start date for cumulative stats (YYYY-MM-DD).')
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -365,7 +484,7 @@ def main():
 
     print(f"Parsing {run_stats_path} for date {date_str}...")
     drive_service_for_stats = get_drive_service(project_root)
-    summary, content = build_daily_report_md(run_stats_path, date_str, drive_service_for_stats)
+    summary, content = build_daily_report_md(run_stats_path, date_str, drive_service_for_stats, args.start_date)
     
     if not summary:
         print("Could not generate daily report from stats. Exiting.")

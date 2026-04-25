@@ -2,10 +2,10 @@
 pipeline.py  —  News-to-video content pipeline
 ================================================
 LLM fallback chain (priority order):
-  1. Antigravity Manager  (Docker, port 8045)          — API_KEY / API_BASE_URL
-  2. GitHub Models        (gpt-4o via Azure endpoint)  — GH_MODELS_TOKEN
-  3. Cloudflare Workers AI                             — CF_ACCOUNT_ID / CF_AI_TOKEN
-  4. Ollama               (local llama3.2:3b)          — OLLAMA_BASE_URL / OLLAMA_MODEL
+  1. GitHub Models        (gpt-4o via Azure endpoint)  — GH_MODELS_TOKEN
+  2. Cloudflare Workers AI                             — CF_ACCOUNT_ID / CF_AI_TOKEN
+  3. Ollama               (local llama3.2:3b)          — OLLAMA_BASE_URL / OLLAMA_MODEL
+  4. Antigravity Manager  (Docker, port 8045)          — API_KEY / API_BASE_URL
 
 Monthly report:
   - Each run appends a JSON line to pipeline_stats_YYYY_MM.jsonl on Drive.
@@ -31,16 +31,12 @@ from PIL import Image
 # ──────────────────────────────────────────────────────────────────────────────
 # LLM SOURCE CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
-# Source 1 — Antigravity Manager (primary)
-API_KEY         = os.environ.get("API_KEY", "password")
-API_BASE_URL    = os.environ.get("API_BASE_URL", "http://127.0.0.1:8045/v1")
-
-# Source 2 — GitHub Models (cloud fallback)
+# Source 1 — GitHub Models (primary cloud fallback)
 GH_MODELS_TOKEN    = os.environ.get("GH_MODELS_TOKEN", "")
 GH_MODELS_BASE_URL = os.environ.get("GH_MODELS_BASE_URL", "https://models.inference.ai.azure.com")
 GH_MODEL           = os.environ.get("GH_MODEL", "gpt-4o")
 
-# Source 3 — Cloudflare Workers AI (multi-account pool)
+# Source 2 — Cloudflare Workers AI (multi-account pool)
 # Secret format — one JSON array covers all accounts:
 #   CLOUDFLARE_ACCOUNTS_JSON = '[{"id":"abc123","token":"tok1"},{"id":"def456","token":"tok2"}]'
 # Falls back to legacy single-pair env vars if the JSON secret is absent.
@@ -159,9 +155,13 @@ def _mark_cf_exhausted(account_id: str):
         _cf_exhausted = True
         print("   ⚠️  All Cloudflare accounts exhausted for this run")
 
-# Source 4 — Ollama (local last resort)
+# Source 3 — local ollama (local fallback)
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
 OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+
+# Source 4 — Antigravity Manager (last resort)
+API_KEY         = os.environ.get("API_KEY", "password")
+API_BASE_URL    = os.environ.get("API_BASE_URL", "http://127.0.0.1:8045/v1")
 
 MAX_RETRIES  = 3
 TOPIC_LIMIT  = int(os.environ.get("TOPIC_LIMIT", "30"))
@@ -299,16 +299,16 @@ def _call_cloudflare_ai(prompt: str) -> str:
 def generate_text(prompt: str) -> str:
     """
     Try each LLM source in priority order; return first success.
-    Priority: Antigravity (1) -> GitHub Models (2) -> Cloudflare AI (3) -> Ollama (4)
+    Priority: GitHub Models (1) -> Cloudflare AI (2) -> Ollama (3) -> Antigravity (4)
     Stats recorded per source for monthly report.
     """
     sources = [
-        ("Antigravity",   lambda: _call_openai_compat(API_BASE_URL, API_KEY, "gemini-3-flash", prompt)),
         ("GitHub Models", lambda: _call_openai_compat(GH_MODELS_BASE_URL, GH_MODELS_TOKEN, GH_MODEL, prompt)
                                   if GH_MODELS_TOKEN
                                   else (_ for _ in ()).throw(ValueError("GH_MODELS_TOKEN not set"))),
         ("Cloudflare AI", lambda: _call_cloudflare_ai(prompt)),
         ("Ollama",        lambda: _call_openai_compat(OLLAMA_BASE_URL, "ollama", OLLAMA_MODEL, prompt)),
+        ("Antigravity",   lambda: _call_openai_compat(API_BASE_URL, API_KEY, "gemini-3-flash", prompt)),
     ]
 
     last_err = None
