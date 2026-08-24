@@ -142,7 +142,7 @@ jobs:
         run: |
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.GH_MODELS_TOKEN }}" \
-            https://models.inference.ai.azure.com/models)
+            https://models.inference.ai.azure.com/models || echo "000")
           if [ "$RESPONSE" = "200" ]; then
             echo "✅ GitHub Models API: OK"
             echo "GH_MODELS_AVAILABLE=true" >> $GITHUB_ENV
